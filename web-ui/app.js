@@ -36,16 +36,12 @@ function log(message, type = "info", details = null) {
 
   let detailsHtml = "";
   if (details) {
-    detailsHtml = `<div style="margin-top: 5px; padding: 8px; background: rgba(0,0,0,0.05); border-radius: 4px; font-size: 11px;">${formatDetails(
+    detailsHtml = `<div style="margin-top: 2px; padding: 4px; background: rgba(0,0,0,0.05); border-radius: 4px; font-size: 11px; display: block;">${formatDetails(
       details
     )}</div>`;
   }
 
-  logEntry.innerHTML = `
-        <div class="timestamp">[${timestamp}]</div>
-        <div class="message">${message}</div>
-        ${detailsHtml}
-    `;
+  logEntry.innerHTML = `<div class="timestamp">[${timestamp}]</div><div class="message">${message.trim()}</div>${detailsHtml}`;
 
   const logsDiv = document.getElementById("logs");
   // Insert at the beginning instead of appending
@@ -186,49 +182,116 @@ async function checkServices() {
 
 // ============= Storage Functions =============
 function saveKeys(username, keyPair) {
-  const data = {
+  // Get existing accounts
+  let accounts = JSON.parse(localStorage.getItem("zerotrust_accounts") || "{}");
+
+  // Save this account
+  accounts[username] = {
     username,
     publicKey: keyPair.publicKey,
     privateKey: keyPair.privateKey,
   };
-  localStorage.setItem("zerotrust_keys", JSON.stringify(data));
-  log("💾 Keys saved to browser storage", "success");
+
+  localStorage.setItem("zerotrust_accounts", JSON.stringify(accounts));
+  localStorage.setItem("zerotrust_last_username", username);
+  log("💾 Account saved to browser storage", "success");
+}
+
+function getAllAccounts() {
+  return JSON.parse(localStorage.getItem("zerotrust_accounts") || "{}");
+}
+
+function getLastUsername() {
+  return localStorage.getItem("zerotrust_last_username");
+}
+
+function deleteAccount(username) {
+  let accounts = getAllAccounts();
+  delete accounts[username];
+  localStorage.setItem("zerotrust_accounts", JSON.stringify(accounts));
+  log("🗑️ Account deleted: " + username, "info");
 }
 
 async function loadStoredKeys() {
-  const stored = localStorage.getItem("zerotrust_keys");
-  if (stored) {
-    const data = JSON.parse(stored);
-    state.username = data.username;
-    state.keyPair = {
-      publicKey: data.publicKey,
-      privateKey: data.privateKey,
-    };
-
-    // Recreate elliptic key pair from hex
-    try {
-      const EC = elliptic.ec;
-      const ec = new EC("secp256k1");
-      const keyPair = ec.keyFromPrivate(data.privateKey, "hex");
-      state.keyPair.keyPairObject = keyPair;
-
-      log("📂 Loaded saved keys for user: " + data.username, "info");
-    } catch (error) {
-      log("⚠️ Could not load stored keys: " + error.message, "warning");
-    }
-
-    updateUI();
-
-    // Show login option
-    document.getElementById("registerSection").style.display = "none";
-    document.getElementById("loginSection").style.display = "block";
+  // Migration: convert old single account to new format
+  const oldStored = localStorage.getItem("zerotrust_keys");
+  if (oldStored) {
+    const data = JSON.parse(oldStored);
+    saveKeys(data.username, data);
+    localStorage.removeItem("zerotrust_keys");
   }
+
+  const accounts = getAllAccounts();
+  const lastUsername = getLastUsername();
+
+  if (Object.keys(accounts).length > 0) {
+    // Has saved accounts - show account selection
+    document.getElementById("accountSelectionSection").style.display = "block";
+    document.getElementById("registerSection").style.display = "none";
+    document.getElementById("loginSection").style.display = "none";
+
+    // Render account list
+    renderAccountList();
+
+    log(`📂 Found ${Object.keys(accounts).length} saved account(s)`, "info");
+    if (lastUsername) {
+      log(`💡 Last used: ${lastUsername}`, "info");
+    }
+  } else {
+    // No saved accounts - show account selection
+    document.getElementById("accountSelectionSection").style.display = "block";
+    document.getElementById("registerSection").style.display = "none";
+    document.getElementById("loginSection").style.display = "none";
+    log(
+      "💡 Welcome! Please register a new account or login with existing credentials",
+      "info"
+    );
+  }
+}
+
+function renderAccountList() {
+  const accounts = getAllAccounts();
+  const lastUsername = getLastUsername();
+  const container = document.getElementById("savedAccountsList");
+
+  if (!container) return;
+
+  if (Object.keys(accounts).length === 0) {
+    container.innerHTML =
+      '<p style="color: #999; font-size: 13px; text-align: center; padding: 20px;">No saved accounts</p>';
+    return;
+  }
+
+  container.innerHTML = Object.keys(accounts)
+    .map((username) => {
+      const account = accounts[username];
+      const isLast = username === lastUsername;
+      return `
+      <div class="account-item ${
+        isLast ? "last-used" : ""
+      }" onclick="selectAccount('${username}')">
+        <div class="account-info">
+          <div class="account-username">👤 ${username}</div>
+          <div class="account-key">${account.publicKey.substring(
+            0,
+            20
+          )}...</div>
+        </div>
+        <div class="account-actions">
+          ${isLast ? '<span class="badge">Last Used</span>' : ""}
+          <button class="btn-icon" onclick="event.stopPropagation(); deleteAccountConfirm('${username}')" title="Delete">🗑️</button>
+        </div>
+      </div>
+    `;
+    })
+    .join("");
 }
 
 // ============= UI Updates =============
 function updateUI() {
   if (state.isLoggedIn) {
     document.getElementById("userInfo").style.display = "block";
+    document.getElementById("accountSelectionSection").style.display = "none";
     document.getElementById("registerSection").style.display = "none";
     document.getElementById("loginSection").style.display = "none";
     document.getElementById("actionsSection").style.display = "block";
@@ -308,11 +371,10 @@ async function register() {
       saveKeys(username, keyPair);
 
       log("✅ Registration successful!", "success");
+      log("🔑 Auto-logging in with new account...", "info");
 
-      // Show login section
-      document.getElementById("registerSection").style.display = "none";
-      document.getElementById("loginSection").style.display = "block";
-      updateUI();
+      // Auto login after registration
+      await login();
     } else {
       log("❌ Registration failed: " + result.error, "error");
     }
@@ -587,16 +649,23 @@ async function viewHistory() {
 function logout() {
   log("👋 Logging out...", "info");
 
+  const username = state.username;
   state.token = null;
   state.isLoggedIn = false;
 
   updateUI();
   showSecurityLayers([false, false, false]);
 
-  log("✅ Logged out successfully", "success");
+  log(`✅ Logged out from account: ${username}`, "success");
+  log("💡 You can login again or switch to a different account", "info");
 
-  // Show login section again
-  document.getElementById("loginSection").style.display = "block";
+  // Show account selection with account list
+  document.getElementById("accountSelectionSection").style.display = "block";
+  document.getElementById("registerSection").style.display = "none";
+  document.getElementById("loginSection").style.display = "none";
+
+  // Refresh account list
+  renderAccountList();
 }
 
 function registerNewUser() {
@@ -612,6 +681,7 @@ function registerNewUser() {
   localStorage.removeItem("zerotrust_keys");
 
   // Update UI
+  document.getElementById("accountSelectionSection").style.display = "none";
   document.getElementById("registerSection").style.display = "block";
   document.getElementById("loginSection").style.display = "none";
   document.getElementById("actionsSection").style.display = "none";
@@ -623,6 +693,236 @@ function registerNewUser() {
   document.getElementById("registerUsername").value = "";
 
   log("✅ Ready to register new user", "success");
+}
+
+// ============= Account Switching Functions =============
+
+function showRegisterForm() {
+  try {
+    log("➕ Opening registration form...", "info");
+    document.getElementById("accountSelectionSection").style.display = "none";
+    document.getElementById("registerSection").style.display = "block";
+    document.getElementById("loginSection").style.display = "none";
+
+    // Focus on username input
+    setTimeout(() => {
+      const input = document.getElementById("registerUsername");
+      if (input) {
+        input.focus();
+      }
+    }, 100);
+  } catch (error) {
+    console.error("Error in showRegisterForm:", error);
+    log("❌ Error showing register form: " + error.message, "error");
+  }
+}
+
+function showLoginForm() {
+  try {
+    log("🔑 Opening login form...", "info");
+    document.getElementById("accountSelectionSection").style.display = "none";
+    document.getElementById("registerSection").style.display = "none";
+    document.getElementById("loginSection").style.display = "block";
+
+    // Check if we have saved account
+    const stored = localStorage.getItem("zerotrust_keys");
+    if (stored) {
+      const data = JSON.parse(stored);
+      document.getElementById("savedAccountLogin").style.display = "block";
+      document.getElementById("manualAccountLogin").style.display = "none";
+      document.getElementById("savedAccountInfo").textContent = `Username: ${
+        data.username
+      } | Public Key: ${data.publicKey.substring(0, 16)}...`;
+      log("✓ Found saved account: " + data.username, "success");
+    } else {
+      // No saved account, show manual login form
+      showManualLoginForm();
+    }
+  } catch (error) {
+    console.error("Error in showLoginForm:", error);
+    log("❌ Error showing login form: " + error.message, "error");
+  }
+}
+
+function showManualLoginForm() {
+  log("🔄 Switching to manual login...", "info");
+  document.getElementById("savedAccountLogin").style.display = "none";
+  document.getElementById("manualAccountLogin").style.display = "block";
+
+  // Focus on username input
+  setTimeout(() => {
+    const input = document.getElementById("manualUsername");
+    if (input) {
+      input.focus();
+    }
+  }, 100);
+}
+
+function backToAccountSelection() {
+  log("← Returning to account selection...", "info");
+  document.getElementById("accountSelectionSection").style.display = "block";
+  document.getElementById("registerSection").style.display = "none";
+  document.getElementById("loginSection").style.display = "none";
+
+  // Clear input fields
+  document.getElementById("registerUsername").value = "";
+  document.getElementById("manualUsername").value = "";
+  document.getElementById("manualPrivateKey").value = "";
+
+  // Refresh account list
+  renderAccountList();
+}
+
+function switchAccount() {
+  try {
+    log("🔄 Switching to different account...", "info");
+
+    // Clear current session
+    const wasLoggedIn = state.isLoggedIn;
+    state.token = null;
+    state.isLoggedIn = false;
+
+    // Keep keys in storage for later use, but clear from state
+    const username = state.username;
+    state.username = null;
+    state.keyPair = null;
+
+    // Show account selection
+    document.getElementById("accountSelectionSection").style.display = "block";
+    document.getElementById("registerSection").style.display = "none";
+    document.getElementById("loginSection").style.display = "none";
+    document.getElementById("actionsSection").style.display = "none";
+    document.getElementById("userInfo").style.display = "none";
+    document.getElementById("balanceDisplay").style.display = "none";
+    document.getElementById("securityLayers").style.display = "none";
+
+    // Reset security layers
+    showSecurityLayers([false, false, false]);
+
+    // Refresh account list
+    renderAccountList();
+
+    if (wasLoggedIn) {
+      log(`✅ Logged out from account: ${username}`, "success");
+    }
+    log("✅ Ready to login or register with different account", "success");
+  } catch (error) {
+    log("❌ Error switching account: " + error.message, "error");
+  }
+}
+
+function selectAccount(username) {
+  try {
+    log(`🔑 Loading account: ${username}...`, "info");
+
+    const accounts = getAllAccounts();
+    const account = accounts[username];
+
+    if (!account) {
+      log("❌ Account not found", "error");
+      return;
+    }
+
+    // Load keys into state
+    state.username = account.username;
+    state.keyPair = {
+      publicKey: account.publicKey,
+      privateKey: account.privateKey,
+    };
+
+    // Recreate elliptic key pair
+    const EC = elliptic.ec;
+    const ec = new EC("secp256k1");
+    const keyPair = ec.keyFromPrivate(account.privateKey, "hex");
+    state.keyPair.keyPairObject = keyPair;
+
+    // Save as last used
+    localStorage.setItem("zerotrust_last_username", username);
+
+    log("✅ Account loaded successfully", "success");
+
+    // Auto login
+    login();
+  } catch (error) {
+    log("❌ Error loading account: " + error.message, "error");
+    console.error(error);
+  }
+}
+
+function deleteAccountConfirm(username) {
+  if (
+    confirm(
+      `Are you sure you want to delete account "${username}"?\n\nThis will permanently remove the private key from browser storage.`
+    )
+  ) {
+    deleteAccount(username);
+    renderAccountList();
+
+    // If it was the current account, reset
+    if (state.username === username) {
+      state.username = null;
+      state.keyPair = null;
+      state.token = null;
+      state.isLoggedIn = false;
+      updateUI();
+    }
+  }
+}
+
+async function loginWithManualKeys() {
+  const username = document.getElementById("manualUsername").value.trim();
+  const privateKey = document.getElementById("manualPrivateKey").value.trim();
+
+  if (!username || !privateKey) {
+    log("❌ Please enter both username and private key", "error");
+    return;
+  }
+
+  log("🔑 Attempting manual login...", "info", { Username: username });
+
+  try {
+    // Validate and recreate key pair
+    const EC = elliptic.ec;
+    const ec = new EC("secp256k1");
+    const keyPair = ec.keyFromPrivate(privateKey, "hex");
+    const publicKey = keyPair.getPublic("hex");
+
+    // Set state
+    state.username = username;
+    state.keyPair = {
+      publicKey: publicKey,
+      privateKey: privateKey,
+      keyPairObject: keyPair,
+    };
+
+    // Save to storage
+    saveKeys(username, state.keyPair);
+
+    log("✅ Keys loaded successfully", "success");
+    log("🔐 Public Key: " + publicKey.substring(0, 32) + "...", "info");
+
+    // Update UI
+    updateUI();
+    document.getElementById("loginSection").style.display = "block";
+    document.getElementById("savedAccountLogin").style.display = "block";
+    document.getElementById("manualAccountLogin").style.display = "none";
+    document.getElementById(
+      "savedAccountInfo"
+    ).textContent = `Username: ${username} | Public Key: ${publicKey.substring(
+      0,
+      16
+    )}...`;
+
+    // Now proceed with actual login
+    await login();
+  } catch (error) {
+    log("❌ Invalid private key: " + error.message, "error");
+  }
+}
+
+function loginDifferentAccount() {
+  // Legacy function - redirect to switchAccount
+  switchAccount();
 }
 
 // ============= Demo Functions =============
@@ -689,82 +989,117 @@ async function simulateMITM() {
     return;
   }
 
-  log("⚠️ DEMO: Simulating Man-in-the-Middle (MITM) attack...", "warning");
-  log(
-    "🕵️ Attacker intercepts request and modifies the recipient...",
-    "warning"
-  );
+  log("⚠️ DEMO: Simulating Gateway Impersonation (MITM) attack...", "warning");
+  log("🕵️ Attacker intercepts and tries to impersonate gateway...", "warning");
 
   try {
-    // Create legitimate request
-    const originalRecipient = "user2";
-    const maliciousRecipient = "attacker";
-    const amount = 100000;
+    log("\n=== LEGITIMATE REQUEST ===", "info");
 
+    // Step 1: Create and send legitimate balance request
     const payload = {
       data: {
-        username: state.username,
-        recipient: originalRecipient,
-        amount: amount,
-        timestamp: Date.now(),
+        action: "balance",
+        timestamp: Math.floor(Date.now() / 1000),
       },
       token: state.token,
     };
 
-    // Sign ORIGINAL payload (before padding and tampering)
     const signature = signData(payload, state.keyPair);
     const paddedPayload = applyPadding(payload);
 
-    log("📤 Original Request (before interception):", "info", {
-      recipient: originalRecipient,
-      amount: amount,
+    log("📤 Client sends balance request:", "info", {
+      action: "balance",
+      signed: "with user private key",
     });
 
-    // Attacker modifies the payload AFTER signing
-    const tamperedPayload = JSON.parse(JSON.stringify(payload));
-    tamperedPayload.data.recipient = maliciousRecipient;
-    const tamperedPadded = applyPadding(tamperedPayload);
+    // Step 2: Simulate attacker intercepting and forging gateway response
+    log("\n=== ATTACKER INTERCEPTS ===", "warning");
+    log("🕵️ Attacker on network path between client and app", "warning");
+    log("👹 Attacker creates fake gateway response...", "warning");
 
-    log("👹 Attacker modifies recipient:", "warning", {
-      original: originalRecipient,
-      tampered: maliciousRecipient,
-    });
-
-    const requestBody = {
-      protected_payload: tamperedPadded,
-      user_signature: signature, // Original signature doesn't match tampered data
-      meta: {},
+    // Attacker forges a response
+    const fakeResponse = {
+      success: true,
+      data: {
+        balance: 999999999,
+        currency: "VND",
+        message: "Balance after hacker attack!",
+      },
     };
 
-    log("📤 Tampered Request (with original signature):", "warning", {
-      tamperedRecipient: maliciousRecipient,
-      originalSignature: signature.substring(0, 50) + "...",
+    log("👹 Forged gateway response:", "warning", {
+      success: true,
+      balance: 999999999,
+      message: "Balance after hacker attack!",
     });
 
-    const response = await fetch(`${CONFIG.GATEWAY_URL}/api/transfer`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${state.token}`,
-      },
-      body: JSON.stringify(requestBody),
+    // Step 3: Attacker tries to compute HMAC
+    log("\n=== HMAC VALIDATION ===", "info");
+
+    // Attacker doesn't have the real secret, tries to guess
+    const wrongSecret = "attacker-fake-secret-2025";
+    const attackerHMAC = CryptoJS.HmacSHA256(
+      JSON.stringify(fakeResponse),
+      wrongSecret
+    ).toString();
+
+    const correctSecret = "gateway-app-shared-secret-2025";
+    const legitimateHMAC = CryptoJS.HmacSHA256(
+      JSON.stringify(fakeResponse),
+      correctSecret
+    ).toString();
+
+    log("👹 Attacker has:", "error", {
+      "HMAC Secret": "❌ Does not have real secret",
+      "Attacker guess": wrongSecret,
+      "Computed HMAC": attackerHMAC.substring(0, 40) + "...",
     });
 
-    const result = await response.json();
+    log("🔐 Real HMAC (only legitimate gateway knows):", "success", {
+      "Real Secret": "[PROTECTED]",
+      "Real HMAC": legitimateHMAC.substring(0, 40) + "...",
+    });
 
-    log("📥 Response from server:", !response.ok ? "success" : "error", result);
+    // Step 4: Client validates HMAC
+    log("\n=== CLIENT VALIDATES RESPONSE ===", "info");
 
-    if (!response.ok) {
-      log(
-        "✅ ATTACK BLOCKED! Signature verification detected data tampering",
-        "success"
-      );
-      showSecurityLayers([true, true, false]); // Signature failed
-    } else {
-      log("❌ Security breach! This should not happen!", "error");
-    }
+    // Client would use the real secret to compute HMAC
+    const clientComputedHMAC = CryptoJS.HmacSHA256(
+      JSON.stringify(fakeResponse),
+      correctSecret
+    ).toString();
+
+    log("🔍 Client checks: Received HMAC === Computed HMAC", "info", {
+      "Received HMAC": attackerHMAC.substring(0, 40) + "... (from attacker)",
+      "Computed HMAC":
+        clientComputedHMAC.substring(0, 40) + "... (real gateway)",
+      match: attackerHMAC === clientComputedHMAC,
+    });
+
+    // Show that Layer 1 (HMAC/Gateway validation) failed
+    showSecurityLayers([false, true, true]); // HMAC FAILED, Token OK, Signature OK
+
+    log("\n*** ATTACK BLOCKED! ***", "success");
+    log("✅ HMAC validation FAILED!", "success");
+    log("✅ Fake response rejected - not from legitimate gateway", "success");
+    log("✅ Attack cannot proceed because:", "info", {
+      reason1: "Attacker does NOT have GATEWAY_HMAC_SECRET",
+      reason2: "Cannot compute valid HMAC without the secret",
+      reason3: "Forged response is detected and rejected",
+    });
+
+    log("\n=== SECURITY EXPLANATION ===", "info");
+    log(
+      "🔑 Asymmetric Signatures: Prove CLIENT is legitimate (User Private Key)",
+      "info"
+    );
+    log("🔐 HMAC: Prove GATEWAY is legitimate (Shared Gateway Secret)", "info");
+    log(
+      "✓ Together they create zero-trust security - cryptographically verify all communication",
+      "success"
+    );
   } catch (error) {
-    log("✅ Attack failed: " + error.message, "success");
+    log("❌ Demo error: " + error.message, "error");
   }
 }
 
@@ -822,7 +1157,7 @@ async function simulateReplayAttack() {
         "✅ ATTACK BLOCKED! Timestamp validation prevented replay attack",
         "success"
       );
-      showSecurityLayers([true, false, false]); // HMAC/timestamp failed
+      showSecurityLayers([false, false, false]); // All layers fail due to old timestamp
     } else {
       log("❌ Security breach! This should not happen!", "error");
     }

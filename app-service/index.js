@@ -101,6 +101,42 @@ async function verifyToken(req, res, next) {
       });
     }
 
+    // REPLAY ATTACK PROTECTION: Validate timestamp
+    // Check both direct timestamp and nested data.timestamp
+    const timestamp = actualPayload.timestamp || actualPayload.data?.timestamp;
+
+    if (timestamp) {
+      const now = Date.now();
+      const requestTime = timestamp;
+      const timeDiff = Math.abs(now - requestTime);
+      const MAX_TIME_DIFF = 60 * 1000; // 60 seconds (1 minute)
+
+      if (timeDiff > MAX_TIME_DIFF) {
+        console.error("❌ Replay attack detected - Timestamp too old:", {
+          requestTime: new Date(requestTime).toISOString(),
+          currentTime: new Date(now).toISOString(),
+          diffSeconds: Math.floor(timeDiff / 1000),
+          maxAllowedSeconds: 60,
+        });
+        return res.status(401).json({
+          success: false,
+          error: "Request timestamp expired - Possible replay attack",
+          layer: "timestamp_validation",
+          details: {
+            age_seconds: Math.floor(timeDiff / 1000),
+            max_allowed_seconds: 60,
+          },
+        });
+      }
+      console.log(
+        "✅ Timestamp validation passed (age: " +
+          Math.floor(timeDiff / 1000) +
+          "s)"
+      );
+    } else {
+      console.warn("⚠️ No timestamp in request - replay protection disabled");
+    }
+
     // Verify token with AAA Server
     const response = await axios.post(`${AAA_URL}/verify-token`, {
       token: actualPayload.token,
@@ -148,6 +184,15 @@ function verifyUserSignature(req, res, next) {
 
     // Remove padding before verification
     const originalPayload = crypto.removePadding(protected_payload);
+
+    console.log("🔍 After removePadding:", {
+      hasData: !!originalPayload,
+      dataType: typeof originalPayload,
+      dataKeys: originalPayload ? Object.keys(originalPayload) : [],
+      dataPreview: originalPayload
+        ? JSON.stringify(originalPayload).substring(0, 100)
+        : "null",
+    });
 
     console.log("🔍 Signature Debug:", {
       signatureType: typeof user_signature,
@@ -265,16 +310,25 @@ app.post("/internal/balance", threeLayerVerification, async (req, res) => {
 app.post("/internal/transfer", threeLayerVerification, async (req, res) => {
   try {
     const username = req.tokenPayload.username;
-    const { data: requestData } = req.userData;
 
     console.log(`💸 Transfer request from: ${username}`);
+    console.log("🔍 req.userData:", {
+      exists: !!req.userData,
+      type: typeof req.userData,
+      keys: req.userData ? Object.keys(req.userData) : [],
+      data: req.userData,
+    });
 
-    const { receiver, amount } = requestData;
+    // Extract the actual data - userData already has the data after removePadding
+    // The payload contains: { username, receiver, amount, timestamp, token }
+    const receiver = req.userData?.receiver;
+    const amount = req.userData?.amount;
 
     if (!receiver || !amount || amount <= 0) {
       return res.status(400).json({
         success: false,
         error: "Invalid transfer parameters",
+        received: { receiver, amount, userData: req.userData },
       });
     }
 
