@@ -1,0 +1,9 @@
+{
+  "name": "zero-trust-shared",
+  "version": "1.0.0",
+  "description": "Shared cryptography library for Zero Trust architecture",
+  "main": "crypto.js",
+  "dependencies": {
+    "elliptic": "^6.5.4"
+  }
+}

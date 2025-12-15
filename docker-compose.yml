@@ -1,0 +1,95 @@
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: zerotrust-postgres
+    environment:
+      POSTGRES_DB: zerotrust
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - zerotrust-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # AAA Server (Authentication, Authorization, Accounting)
+  aaa-server:
+    build:
+      context: .
+      dockerfile: aaa-server/Dockerfile
+    container_name: zerotrust-aaa
+    environment:
+      PORT: 4001
+      JWT_SECRET: aaa-server-secret-key-2025
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: zerotrust
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+    ports:
+      - "4001:4001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - zerotrust-network
+    restart: unless-stopped
+
+  # Gateway Service
+  gateway:
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+    container_name: zerotrust-gateway
+    environment:
+      PORT: 4002
+      AAA_URL: http://aaa-server:4001
+      APP_URL: http://app-service:4003
+      GATEWAY_HMAC_SECRET: gateway-app-shared-secret-2025
+    ports:
+      - "4002:4002"
+    depends_on:
+      - aaa-server
+    networks:
+      - zerotrust-network
+    restart: unless-stopped
+
+  # App Service (Business Logic)
+  app-service:
+    build:
+      context: .
+      dockerfile: app-service/Dockerfile
+    container_name: zerotrust-app
+    environment:
+      PORT: 4003
+      AAA_URL: http://aaa-server:4001
+      GATEWAY_HMAC_SECRET: gateway-app-shared-secret-2025
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: zerotrust
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+    ports:
+      - "4003:4003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      aaa-server:
+        condition: service_started
+    networks:
+      - zerotrust-network
+    restart: unless-stopped
+
+networks:
+  zerotrust-network:
+    driver: bridge
+
+volumes:
+  postgres_data:

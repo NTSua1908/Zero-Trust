@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Zero Trust Demo - Web UI</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/elliptic/6.5.4/elliptic.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+        padding: 20px;
+      }
+
+      .container {
+        max-width: 1400px;
+        margin: 0 auto;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+        height: calc(100vh - 40px);
+      }
+
+      .panel {
+        background: white;
+        border-radius: 15px;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+        padding: 30px;
+        display: flex;
+        flex-direction: column;
+        min-width: 0; /* Allow panel to shrink */
+        overflow: hidden; /* Prevent content overflow */
+      }
+
+      .panel-header {
+        border-bottom: 2px solid #667eea;
+        padding-bottom: 15px;
+        margin-bottom: 20px;
+      }
+
+      .panel-header h2 {
+        color: #667eea;
+        font-size: 24px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .panel-header .status {
+        font-size: 12px;
+        padding: 4px 12px;
+        border-radius: 20px;
+        background: #e0e0e0;
+        color: #666;
+        margin-left: auto;
+      }
+
+      .panel-header .status.online {
+        background: #4caf50;
+        color: white;
+      }
+
+      .panel-header .status.offline {
+        background: #f44336;
+        color: white;
+      }
+
+      .panel-body {
+        flex: 1;
+        overflow-y: auto;
+        overflow-x: hidden; /* Prevent horizontal scroll */
+        min-width: 0; /* Allow content to wrap */
+      }
+
+      /* User Info */
+      .user-info {
+        background: #f5f5f5;
+        padding: 15px;
+        border-radius: 10px;
+        margin-bottom: 20px;
+      }
+
+      .user-info .info-row {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 8px;
+        font-size: 14px;
+      }
+
+      .user-info .info-label {
+        color: #666;
+        font-weight: 600;
+      }
+
+      .user-info .info-value {
+        color: #333;
+        font-family: monospace;
+      }
+
+      /* Buttons */
+      .btn {
+        padding: 12px 24px;
+        border: none;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s;
+        margin: 5px 0;
+        width: 100%;
+      }
+
+      .btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+      }
+
+      .btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        transform: none;
+      }
+
+      .btn-primary {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+      }
+
+      .btn-success {
+        background: #4caf50;
+        color: white;
+      }
+
+      .btn-danger {
+        background: #f44336;
+        color: white;
+      }
+
+      .btn-warning {
+        background: #ff9800;
+        color: white;
+      }
+
+      .btn-secondary {
+        background: #6c757d;
+        color: white;
+      }
+
+      /* Forms */
+      .form-group {
+        margin-bottom: 15px;
+      }
+
+      .form-group label {
+        display: block;
+        margin-bottom: 5px;
+        color: #333;
+        font-weight: 600;
+        font-size: 14px;
+      }
+
+      .form-group input {
+        width: 100%;
+        padding: 10px;
+        border: 2px solid #e0e0e0;
+        border-radius: 8px;
+        font-size: 14px;
+        transition: border-color 0.3s;
+      }
+
+      .form-group input:focus {
+        outline: none;
+        border-color: #667eea;
+      }
+
+      /* Logs Panel */
+      #logs {
+        font-family: "Courier New", monospace;
+        font-size: 12px;
+        line-height: 1.6;
+        color: #333;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        overflow-wrap: break-word; /* Break long words */
+      }
+
+      .log-entry {
+        padding: 8px;
+        margin-bottom: 5px;
+        border-radius: 5px;
+        border-left: 3px solid #e0e0e0;
+        overflow-wrap: break-word; /* Break long words */
+        word-break: break-word; /* Break long words */
+      }
+
+      .log-entry pre {
+        white-space: pre-wrap !important; /* Allow JSON to wrap */
+        word-wrap: break-word !important;
+        overflow-x: auto; /* Allow horizontal scroll for long lines */
+        max-width: 100%; /* Don't exceed container */
+      }
+
+      .log-entry.info {
+        background: #e3f2fd;
+        border-left-color: #2196f3;
+      }
+
+      .log-entry.success {
+        background: #e8f5e9;
+        border-left-color: #4caf50;
+      }
+
+      .log-entry.error {
+        background: #ffebee;
+        border-left-color: #f44336;
+      }
+
+      .log-entry.warning {
+        background: #fff3e0;
+        border-left-color: #ff9800;
+      }
+
+      .log-entry .timestamp {
+        color: #666;
+        font-size: 11px;
+      }
+
+      .log-entry .message {
+        margin-top: 3px;
+      }
+
+      /* Actions Section */
+      .actions-section {
+        margin-bottom: 20px;
+      }
+
+      .actions-section h3 {
+        color: #333;
+        font-size: 16px;
+        margin-bottom: 10px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid #e0e0e0;
+      }
+
+      /* Balance Display */
+      .balance-display {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 20px;
+        border-radius: 10px;
+        text-align: center;
+        margin-bottom: 20px;
+      }
+
+      .balance-display .label {
+        font-size: 14px;
+        opacity: 0.9;
+      }
+
+      .balance-display .amount {
+        font-size: 36px;
+        font-weight: bold;
+        margin: 10px 0;
+      }
+
+      .balance-display .currency {
+        font-size: 18px;
+        opacity: 0.8;
+      }
+
+      /* Security Layers */
+      .security-layers {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 20px;
+      }
+
+      .layer {
+        flex: 1;
+        padding: 10px;
+        border-radius: 8px;
+        text-align: center;
+        font-size: 12px;
+        background: #f5f5f5;
+      }
+
+      .layer.verified {
+        background: #4caf50;
+        color: white;
+      }
+
+      .layer-title {
+        font-weight: bold;
+        margin-bottom: 5px;
+      }
+
+      /* Loading Spinner */
+      .spinner {
+        display: inline-block;
+        width: 20px;
+        height: 20px;
+        border: 3px solid rgba(255, 255, 255, 0.3);
+        border-radius: 50%;
+        border-top-color: white;
+        animation: spin 1s ease-in-out infinite;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      /* Scrollbar */
+      .panel-body::-webkit-scrollbar {
+        width: 8px;
+      }
+
+      .panel-body::-webkit-scrollbar-track {
+        background: #f1f1f1;
+        border-radius: 10px;
+      }
+
+      .panel-body::-webkit-scrollbar-thumb {
+        background: #888;
+        border-radius: 10px;
+      }
+
+      .panel-body::-webkit-scrollbar-thumb:hover {
+        background: #555;
+      }
+
+      /* Clear Logs Button */
+      .panel-footer {
+        margin-top: 10px;
+        padding-top: 10px;
+        border-top: 1px solid #e0e0e0;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <!-- Left Panel: Actions -->
+      <div class="panel">
+        <div class="panel-header">
+          <h2>
+            🔐 Zero Trust Client
+            <span class="status" id="connectionStatus">Offline</span>
+          </h2>
+        </div>
+        <div class="panel-body">
+          <!-- User Info -->
+          <div class="user-info" id="userInfo" style="display: none">
+            <div class="info-row">
+              <span class="info-label">Username:</span>
+              <span class="info-value" id="displayUsername">-</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Public Key:</span>
+              <span class="info-value" id="displayPublicKey">-</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Token:</span>
+              <span class="info-value" id="displayToken">Not logged in</span>
+            </div>
+          </div>
+
+          <!-- Balance Display -->
+          <div
+            class="balance-display"
+            id="balanceDisplay"
+            style="display: none">
+            <div class="label">Your Balance</div>
+            <div class="amount" id="balanceAmount">0</div>
+            <div class="currency">VND</div>
+          </div>
+
+          <!-- Security Layers -->
+          <div
+            class="security-layers"
+            id="securityLayers"
+            style="display: none">
+            <div class="layer" id="layer1">
+              <div class="layer-title">Layer 1</div>
+              <div>HMAC</div>
+            </div>
+            <div class="layer" id="layer2">
+              <div class="layer-title">Layer 2</div>
+              <div>Token</div>
+            </div>
+            <div class="layer" id="layer3">
+              <div class="layer-title">Layer 3</div>
+              <div>Signature</div>
+            </div>
+          </div>
+
+          <!-- Register Section -->
+          <div class="actions-section" id="registerSection">
+            <h3>📝 Register New User</h3>
+            <div class="form-group">
+              <label>Username</label>
+              <input
+                type="text"
+                id="registerUsername"
+                placeholder="Enter username" />
+            </div>
+            <button class="btn btn-primary" onclick="register()">
+              Generate Keys & Register
+            </button>
+          </div>
+
+          <!-- Login Section -->
+          <div class="actions-section" id="loginSection" style="display: none">
+            <h3>🔑 Login</h3>
+            <button class="btn btn-success" onclick="login()">
+              Login with ECDSA Signature
+            </button>
+            <button
+              class="btn btn-secondary"
+              onclick="registerNewUser()"
+              style="margin-top: 10px">
+              Register Different User
+            </button>
+          </div>
+
+          <!-- Actions Section (After Login) -->
+          <div
+            class="actions-section"
+            id="actionsSection"
+            style="display: none">
+            <h3>💰 Account Actions</h3>
+            <button class="btn btn-primary" onclick="checkBalance()">
+              Check Balance
+            </button>
+
+            <div class="form-group" style="margin-top: 15px">
+              <label>Transfer To</label>
+              <input
+                type="text"
+                id="transferReceiver"
+                placeholder="Receiver username" />
+            </div>
+            <div class="form-group">
+              <label>Amount (VND)</label>
+              <input type="number" id="transferAmount" placeholder="Amount" />
+            </div>
+            <button class="btn btn-warning" onclick="transfer()">
+              Transfer Money
+            </button>
+
+            <button
+              class="btn btn-secondary"
+              onclick="viewHistory()"
+              style="margin-top: 15px">
+              View Transaction History
+            </button>
+
+            <button
+              class="btn btn-danger"
+              onclick="logout()"
+              style="margin-top: 20px">
+              Logout
+            </button>
+          </div>
+
+          <!-- Demo Section -->
+          <div class="actions-section">
+            <h3>🎭 Security Demos</h3>
+            <button
+              class="btn btn-danger"
+              onclick="simulateTokenTheft()"
+              title="Demo: Kẻ tấn công đánh cắp JWT token nhưng không có chữ ký số của user. Hệ thống sẽ chặn vì thiếu Layer 3 (User Signature).">
+              🔓 Token Theft Attack
+            </button>
+            <button
+              class="btn btn-danger"
+              onclick="simulateMITM()"
+              style="margin-top: 10px"
+              title="Demo: Kẻ tấn công chặn request và sửa đổi người nhận trong giao dịch chuyển tiền. Hệ thống phát hiện vì chữ ký không khớp với dữ liệu đã thay đổi.">
+              🕵️ Man-in-the-Middle Attack
+            </button>
+            <button
+              class="btn btn-danger"
+              onclick="simulateReplayAttack()"
+              style="margin-top: 10px"
+              title="Demo: Kẻ tấn công ghi lại request cũ (5 phút trước) và gửi lại. Hệ thống chặn vì timestamp quá cũ (vượt quá 60 giây).">
+              🔁 Replay Attack
+            </button>
+            <button
+              class="btn btn-danger"
+              onclick="simulateDataTampering()"
+              style="margin-top: 10px"
+              title="Demo: Kẻ tấn công sửa số tiền chuyển từ 10,000 VND thành 1,000,000 VND sau khi đã ký. Hệ thống phát hiện vì chữ ký không còn hợp lệ.">
+              ✏️ Data Tampering Attack
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Panel: Logs -->
+      <div class="panel">
+        <div class="panel-header">
+          <h2>📋 Activity Logs & Security Details</h2>
+        </div>
+        <div class="panel-body" id="logsContainer">
+          <div id="logs"></div>
+        </div>
+        <div class="panel-footer">
+          <button class="btn btn-secondary" onclick="clearLogs()">
+            Clear Logs
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
