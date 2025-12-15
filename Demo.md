@@ -1,5 +1,42 @@
 # BÁO CÁO & KỊCH BẢN DEMO: KIẾN TRÚC ZERO TRUST VỚI XÁC THỰC ĐA LỚP
 
+## SƠ ĐỒ KIẾN TRÚC HỆ THỐNG
+
+```mermaid
+graph LR
+    Client["🖥️ CLIENT<br/>Private Key<br/>Public Key"]
+    Gateway["🚪 GATEWAY<br/>HMAC Signer"]
+    AAA["🔐 AAA SERVER<br/>Token Issuer"]
+    App["📊 APP SERVICE<br/>3-Layer Check"]
+
+    Client <-->|1. Register| Gateway
+    Gateway <-->|Forward| AAA
+
+    Client <-->|2. Login + Sign| Gateway
+    Gateway <-->|Verify + Issue Token| AAA
+
+    Client -->|3. API + Token + Sig| Gateway
+    Gateway -->|Add HMAC| Gateway
+    Gateway -->|Forward| App
+    App -->|Result| Client
+```
+
+**Chi tiết từng luồng:**
+
+1. **Register (Lần đầu):** Client → Gateway → AAA (lưu Public Key)
+
+2. **Login (Mỗi lần đăng nhập):**
+
+   - Client ký vào {username, timestamp} bằng Private Key
+   - Gateway forward đến AAA
+   - AAA verify chữ ký + cấp Token
+
+3. **API Call (Gọi hàm):**
+   - Client gửi Token + Signature vào request body
+   - Gateway thêm HMAC vào request
+   - Gateway forward đến App Service (không gọi AAA)
+   - App Service xác thực 3 lớp (HMAC → Token → Signature)
+
 ## PHẦN 1: NỘI DUNG BÁO CÁO (THUYẾT TRÌNH)
 
 ### 1. Tổng quan vấn đề
@@ -143,3 +180,77 @@ Trong mô hình này, Private Key gắn liền với thiết bị (lưu trong Lo
 **Trả lời:**
 Layer 1 đảm bảo rằng Request đến App Service **chắc chắn phải đi qua Gateway**.
 Nó ngăn chặn việc Hacker (đã lọt vào mạng nội bộ) kết nối trực tiếp vào cổng 4003 của App Service để spam request. App Service sẽ từ chối mọi kết nối không có chữ ký HMAC từ Gateway.
+
+---
+
+## SƠ ĐỒ CÁC TÌNH HUỐNG TẤN CÔNG & PHÒNG CHỐNG
+
+```mermaid
+graph TD
+    subgraph Normal["✅ LUỒNG BÌNH THƯỜNG"]
+        N1["Request: Token + Signature"]
+        N2["Layer 1: HMAC ✓"]
+        N3["Layer 2: Token ✓"]
+        N4["Layer 3: Signature ✓"]
+        N5["✅ ACCEPTED"]
+    end
+
+    subgraph TokenTheft["❌ TẤN CÔNG LẤY CAP TOKEN"]
+        T1["Attacker có: Token<br/>Attacker không có: Private Key"]
+        T2["Layer 1: HMAC ✓<br/>(request qua Gateway)"]
+        T3["Layer 2: Token ✓<br/>(token hợp lệ)"]
+        T4["Layer 3: Signature ✗<br/>(chữ ký sai)"]
+        T5["❌ REJECTED"]
+    end
+
+    subgraph MITM["❌ TẤN CÔNG GIẢ MẠO GATEWAY"]
+        M1["Attacker giả mạo<br/>Gateway response"]
+        M2["Layer 1: HMAC ✗<br/>(HMAC sai, không có secret)"]
+        M3["Layer 2: Skipped"]
+        M4["Layer 3: Skipped"]
+        M5["❌ REJECTED"]
+    end
+
+    subgraph Replay["❌ TẤN CÔNG PHÁT LẠI REQUEST"]
+        R1["Attacker gửi lại<br/>request cũ (5 phút trước)"]
+        R2["Layer 1: HMAC ✗<br/>(timestamp quá cũ)"]
+        R3["Layer 2: Skipped"]
+        R4["Layer 3: Skipped"]
+        R5["❌ REJECTED"]
+    end
+
+    subgraph DataTamper["❌ TẤN CÔNG THAY ĐỔI DỮ LIỆU"]
+        D1["Request được ký<br/>amount: 10,000"]
+        D2["Attacker thay đổi<br/>amount: 1,000,000"]
+        D3["Layer 1: HMAC ✓"]
+        D4["Layer 2: Token ✓"]
+        D5["Layer 3: Signature ✗<br/>(không khớp dữ liệu)"]
+        D6["❌ REJECTED"]
+    end
+
+    N1 --> N2 --> N3 --> N4 --> N5
+    T1 --> T2 --> T3 --> T4 --> T5
+    M1 --> M2 --> M3 --> M4 --> M5
+    R1 --> R2 --> R3 --> R4 --> R5
+    D1 --> D2 --> D3 --> D4 --> D5 --> D6
+
+    style Normal fill:#c8e6c9
+    style TokenTheft fill:#ffcdd2
+    style MITM fill:#ffcdd2
+    style Replay fill:#ffcdd2
+    style DataTamper fill:#ffcdd2
+    style N5 fill:#66bb6a,color:#fff
+    style T5 fill:#ef5350,color:#fff
+    style M5 fill:#ef5350,color:#fff
+    style R5 fill:#ef5350,color:#fff
+    style D6 fill:#ef5350,color:#fff
+```
+
+### Phân tích chi tiết từng attack:
+
+| Attack             | Điểm yếu bị khai thác                | Lớp bảo vệ chặn     | Kết luận                             |
+| ------------------ | ------------------------------------ | ------------------- | ------------------------------------ |
+| **Token Theft**    | Hacker lấy được token qua XSS/MITM   | Layer 3 (Signature) | Token không đủ, cần Private Key      |
+| **Gateway MITM**   | Attacker giả mạo response từ gateway | Layer 1 (HMAC)      | Attacker không có shared secret      |
+| **Replay Attack**  | Bắt request cũ gửi lại nhiều lần     | Layer 1 (Timestamp) | Timestamp được kiểm tra trong HMAC   |
+| **Data Tampering** | Thay đổi dữ liệu sau khi ký          | Layer 3 (Signature) | Signature không khớp với dữ liệu mới |
