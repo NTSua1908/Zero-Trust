@@ -2,13 +2,19 @@ const express = require("express");
 const cors = require("cors");
 const axios = require("axios");
 const crypto = require("../shared/crypto");
+const vault = require("../shared/vault");
 
 const app = express();
 const PORT = process.env.PORT || 4002;
 const AAA_URL = process.env.AAA_URL || "http://localhost:4001";
 const APP_URL = process.env.APP_URL || "http://localhost:4003";
-const GATEWAY_HMAC_SECRET =
-  process.env.GATEWAY_HMAC_SECRET || "gateway-app-shared-secret-2025";
+
+// Initialize vault
+vault.initVault();
+vault.status();
+vault.auditStatus(3);
+const GATEWAY_HMAC_SECRET = vault.getSecret("gateway_hmac_secret");
+console.log(`✅ Gateway: HMAC Secret loaded from vault\n`);
 
 // Middleware
 app.use(cors());
@@ -28,6 +34,16 @@ app.get("/health", (req, res) => {
     status: "healthy",
     service: "Gateway",
     timestamp: new Date().toISOString(),
+  });
+});
+
+/**
+ * Vault status endpoint
+ */
+app.get("/vault/status", (req, res) => {
+  res.json({
+    secrets: vault.getAllSecrets(),
+    audit_log: vault.getAuditLog().slice(-5),
   });
 });
 
