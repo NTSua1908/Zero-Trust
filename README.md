@@ -63,8 +63,9 @@ Dự án này xây dựng một mô hình **Zero Trust (Không tin cậy bất k
 1. **Client**: Tạo keypair, ký requests với ECDSA
 2. **Gateway**: Proxy, HMAC wrapping cho internal communication
 3. **AAA Server**: Authentication, Authorization, Accounting
-4. **App Service**: Business logic với 3-layer verification
-5. **PostgreSQL**: Lưu trữ public keys và audit logs
+4. **App Service**: Business logic với 3-layer verification (Zero Trust)
+5. **PostgreSQL**: Lưu trữ public keys, user data và audit logs
+6. **Vault**: Secrets management với AES-256-GCM encryption
 
 ### Kiến trúc hoàn chỉnh (5 components)
 
@@ -102,14 +103,23 @@ Dự án này xây dựng một mô hình **Zero Trust (Không tin cậy bất k
 - Attacker không đoán được loại giao dịch
 - Chống traffic analysis
 
-### 5. 3-Layer Verification
+### 5. 3-Layer Verification (Zero Trust)
 
 ```
-Request → [Layer 1: HMAC]     → Verify Gateway
-       → [Layer 2: Token]     → Verify Authorization
-       → [Layer 3: Signature] → Verify User Identity
+Request → [Layer 1: HMAC]     → Verify Gateway (Secret từ Vault)
+       → [Layer 2: Token]     → Verify JWT locally (Secret từ Vault)
+       → [Layer 3: Signature] → Verify User (Public Key từ DB + Cache)
        → ✅ Process Request
 ```
+
+**Đặc biệt**: App Service **không phụ thuộc AAA Server** khi xử lý request, đúng tinh thần Zero Trust.
+
+### 6. Secrets Management (Vault)
+
+- **AES-256-GCM Encryption**: Mọi secrets được mã hóa
+- **Centralized Management**: HMAC và JWT secrets được quản lý tập trung
+- **Audit Trail**: Mọi truy cập secret đều được log
+- **Key Rotation**: Hỗ trợ rotation với history tracking
 
 ## 💻 Yêu cầu hệ thống
 

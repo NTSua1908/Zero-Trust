@@ -8,9 +8,12 @@ graph LR
     Gateway["🚪 GATEWAY<br/>HMAC Signer"]
     AAA["🔐 AAA SERVER<br/>Token Issuer"]
     App["📊 APP SERVICE<br/>3-Layer Check"]
+    Vault["🔐 VAULT<br/>AES-256-GCM<br/>Secrets Manager"]
+    DB[("💾 DATABASE<br/>Public Keys<br/>User Data")]
 
     Client <-->|1. Register| Gateway
     Gateway <-->|Forward| AAA
+    AAA <--> DB
 
     Client <-->|2. Login + Sign| Gateway
     Gateway <-->|Verify + Issue Token| AAA
@@ -18,24 +21,33 @@ graph LR
     Client -->|3. API + Token + Sig| Gateway
     Gateway -->|Add HMAC| Gateway
     Gateway -->|Forward| App
+    App -.->|Verify JWT locally| App
+    App <-->|Get Public Key| DB
     App -->|Result| Client
+
+    Gateway <-.->|Load Secrets| Vault
+    App <-.->|Load Secrets| Vault
 ```
 
 **Chi tiết từng luồng:**
 
-1. **Register (Lần đầu):** Client → Gateway → AAA (lưu Public Key)
+1. **Register (Lần đầu):** Client → Gateway → AAA → Database (lưu Public Key)
 
 2. **Login (Mỗi lần đăng nhập):**
 
    - Client ký vào {username, timestamp} bằng Private Key
    - Gateway forward đến AAA
-   - AAA verify chữ ký + cấp Token
+   - AAA verify chữ ký + cấp JWT Token (chứa username, publicKey)
 
-3. **API Call (Gọi hàm):**
+3. **API Call (Gọi hàm) - Zero Trust:**
    - Client gửi Token + Signature vào request body
+   - Gateway load HMAC secret từ Vault
    - Gateway thêm HMAC vào request
-   - Gateway forward đến App Service (không gọi AAA)
-   - App Service xác thực 3 lớp (HMAC → Token → Signature)
+   - Gateway forward đến App Service
+   - **App Service xác thực 3 lớp (KHÔNG phụ thuộc AAA):**
+     - Layer 1: Verify HMAC (Gateway authentication)
+     - Layer 2: Verify JWT locally với secret từ Vault
+     - Layer 3: Query Database để lấy Public Key → Verify Signature
 
 ## PHẦN 1: NỘI DUNG BÁO CÁO (THUYẾT TRÌNH)
 
@@ -158,9 +170,21 @@ Có ảnh hưởng đến hiệu năng nhưng ở mức chấp nhận được.
 #### Câu 3: Làm sao App Service biết Public Key của User để kiểm tra chữ ký?
 
 **Trả lời:**
-Trong quá trình xác thực Token (Layer 2), App Service gọi sang AAA Server để verify Token.
-Phản hồi từ AAA Server không chỉ xác nhận Token hợp lệ mà còn trả về `payload` chứa thông tin User bao gồm cả `publicKey`.
-(Tham khảo: Hàm `verifyToken` trong `app-service.js` gán `req.tokenPayload` chứa Public Key cho Layer tiếp theo sử dụng).
+App Service áp dụng **Hybrid Approach** kết hợp JWT và Database:
+
+1. **Layer 2**: App Service verify JWT **locally** (không gọi AAA) với secret từ Vault. JWT payload chứa `publicKey` ban đầu.
+
+2. **Layer 3**: App Service query **Database trực tiếp** để lấy Public Key hiện tại của user (có caching 5 phút).
+
+3. **Key Rotation Detection**: So sánh Public Key từ Database với Public Key trong JWT:
+   - Nếu khác nhau → User đã rotate key → Reject request với message "Please login again"
+   - Nếu giống nhau → Verify ECDSA signature
+
+**Lợi ích**:
+
+- Zero Trust: Không phụ thuộc AAA Server khi xử lý request
+- Hỗ trợ key rotation và revocation
+- Performance: Cache giảm DB queries
 
 #### Câu 4: Padding dữ liệu lên 4KB để làm gì? Có tốn băng thông không?
 

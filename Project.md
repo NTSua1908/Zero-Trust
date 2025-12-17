@@ -73,14 +73,22 @@ graph TD
 2.  **Gateway:**
     - Điểm kiểm soát ra vào.
     - Xác thực với AAA để xin Token cho User.
+    - Load HMAC secret từ **Vault**.
     - Đóng gói request và ký **HMAC** trước khi gửi vào mạng nội bộ.
 3.  **AAA Server (Authentication, Authorization, Accounting):**
-    - Trung tâm tin cậy (Trust Anchor).
+    - Chỉ phục vụ **Login/Register**.
     - Quản lý Database chứa **Public Key** của người dùng.
-    - Cấp phát Access Token.
-4.  **App (Edge Host):**
+    - Cấp phát JWT Token (chứa username, publicKey).
+4.  **App (Edge Host - Zero Trust):**
     - Điểm cuối cùng xử lý nghiệp vụ.
+    - **Tự verify JWT** với secret từ Vault (không phụ thuộc AAA).
+    - Query Database để lấy Public Key hiện tại (với cache).
+    - Phát hiện key rotation và revocation.
     - Thực hiện xác thực đa lớp (Verify Gateway, Verify Token, Verify User).
+5.  **Vault (Secrets Manager):**
+    - Quản lý HMAC và JWT secrets.
+    - Mã hóa AES-256-GCM.
+    - Audit trail cho mọi truy cập.
 
 ---
 
