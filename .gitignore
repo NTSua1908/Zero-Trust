@@ -50,3 +50,8 @@ test-signature.html
 # Coverage
 coverage/
 *.lcov
+
+# Vault encryption key (NEVER commit this!)
+.vault-key
+vault-audit.json
+secrets.json

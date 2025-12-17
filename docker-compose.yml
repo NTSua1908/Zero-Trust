@@ -35,6 +35,11 @@ services:
       DB_PASSWORD: postgres
     ports:
       - "4001:4001"
+    volumes:
+      - ./aaa-server:/app
+      - ./shared:/shared
+      - /app/node_modules
+      - /shared/node_modules
     depends_on:
       postgres:
         condition: service_healthy
@@ -55,6 +60,11 @@ services:
       GATEWAY_HMAC_SECRET: gateway-app-shared-secret-2025
     ports:
       - "4002:4002"
+    volumes:
+      - ./gateway:/app
+      - ./shared:/shared
+      - /app/node_modules
+      - /shared/node_modules
     depends_on:
       - aaa-server
     networks:
@@ -78,6 +88,11 @@ services:
       DB_PASSWORD: postgres
     ports:
       - "4003:4003"
+    volumes:
+      - ./app-service:/app
+      - ./shared:/shared
+      - /app/node_modules
+      - /shared/node_modules
     depends_on:
       postgres:
         condition: service_healthy

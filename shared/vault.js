@@ -10,6 +10,13 @@ const crypto = require("crypto");
 // Vault file location
 const VAULT_FILE = path.join(__dirname, "..", "secrets.json");
 const AUDIT_FILE = path.join(__dirname, "..", "vault-audit.json");
+const VAULT_KEY_FILE = path.join(__dirname, "..", ".vault-key");
+
+// Encryption settings
+const ALGORITHM = "aes-256-gcm";
+const KEY_LENGTH = 32; // 256 bits
+const IV_LENGTH = 16; // 128 bits
+const AUTH_TAG_LENGTH = 16; // 128 bits
 
 // Default secrets
 const DEFAULT_SECRETS = {
@@ -18,6 +25,7 @@ const DEFAULT_SECRETS = {
     created_at: new Date().toISOString(),
     rotations: [],
     ttl_hours: null, // null = no expiration
+    encrypted: false, // Mark if value is encrypted
   },
 };
 
@@ -25,14 +33,81 @@ const DEFAULT_SECRETS = {
 let auditLog = [];
 
 /**
- * Simple encryption helper
+ * Get or generate vault encryption key
  */
-function encryptValue(value) {
-  return Buffer.from(value).toString("base64");
+function getVaultKey() {
+  try {
+    if (fs.existsSync(VAULT_KEY_FILE)) {
+      const key = fs.readFileSync(VAULT_KEY_FILE);
+      if (key.length !== KEY_LENGTH) {
+        throw new Error("Invalid key length");
+      }
+      return key;
+    }
+
+    // Generate new key
+    const key = crypto.randomBytes(KEY_LENGTH);
+    fs.writeFileSync(VAULT_KEY_FILE, key, { mode: 0o600 });
+    console.log(`🔑 VAULT: Generated new encryption key at ${VAULT_KEY_FILE}`);
+    console.log(
+      `⚠️  VAULT: Keep this file secure! Without it, secrets cannot be decrypted.`
+    );
+    return key;
+  } catch (error) {
+    console.error("❌ VAULT: Error managing encryption key:", error.message);
+    throw error;
+  }
 }
 
+/**
+ * AES-256-GCM encryption
+ */
+function encryptValue(value) {
+  try {
+    const key = getVaultKey();
+    const iv = crypto.randomBytes(IV_LENGTH);
+    const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
+
+    let encrypted = cipher.update(value, "utf8", "hex");
+    encrypted += cipher.final("hex");
+
+    const authTag = cipher.getAuthTag();
+
+    // Return format: iv:authTag:encrypted
+    return `${iv.toString("hex")}:${authTag.toString("hex")}:${encrypted}`;
+  } catch (error) {
+    console.error("❌ VAULT: Encryption error:", error.message);
+    throw error;
+  }
+}
+
+/**
+ * AES-256-GCM decryption
+ */
 function decryptValue(encrypted) {
-  return Buffer.from(encrypted, "base64").toString("utf-8");
+  try {
+    const key = getVaultKey();
+    const parts = encrypted.split(":");
+
+    if (parts.length !== 3) {
+      throw new Error("Invalid encrypted format");
+    }
+
+    const iv = Buffer.from(parts[0], "hex");
+    const authTag = Buffer.from(parts[1], "hex");
+    const encryptedText = parts[2];
+
+    const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
+    decipher.setAuthTag(authTag);
+
+    let decrypted = decipher.update(encryptedText, "hex", "utf8");
+    decrypted += decipher.final("utf8");
+
+    return decrypted;
+  } catch (error) {
+    console.error("❌ VAULT: Decryption error:", error.message);
+    throw error;
+  }
 }
 
 /**
@@ -43,9 +118,12 @@ function initVault() {
     fs.writeFileSync(VAULT_FILE, JSON.stringify(DEFAULT_SECRETS, null, 2));
     console.log(`\n📦 VAULT: Created at ${VAULT_FILE}`);
     console.log(`📦 VAULT: Default secrets initialized`);
-    console.log(`📦 VAULT: Audit log: ${AUDIT_FILE}\n`);
+    console.log(`📦 VAULT: Audit log: ${AUDIT_FILE}`);
+    console.log(`🔐 VAULT: Encryption: AES-256-GCM`);
+    console.log(`🔑 VAULT: Key file: ${VAULT_KEY_FILE}\n`);
   } else {
-    console.log(`\n📦 VAULT: Loaded from ${VAULT_FILE}\n`);
+    console.log(`\n📦 VAULT: Loaded from ${VAULT_FILE}`);
+    console.log(`🔐 VAULT: Encryption: AES-256-GCM\n`);
   }
 }
 
@@ -105,7 +183,6 @@ function loadSecrets() {
 function getSecret(key, skipAudit = false) {
   const secrets = loadSecrets();
   const secretObj = secrets[key];
-  const envValue = process.env[key.toUpperCase()];
 
   let source = "default";
   let value = DEFAULT_SECRETS[key]?.value;
@@ -118,16 +195,17 @@ function getSecret(key, skipAudit = false) {
       source = "vault (EXPIRED)";
       logAccess("GET", key, "vault-expired", "expired");
     } else {
-      value = secretObj.value;
-      source = "vault (secrets.json)";
+      // Decrypt if encrypted
+      value = secretObj.encrypted
+        ? decryptValue(secretObj.value)
+        : secretObj.value;
+      source = `vault (${
+        secretObj.encrypted ? "AES-256-GCM encrypted" : "plaintext"
+      })`;
       if (!skipAudit) {
         logAccess("GET", key, "vault", "success");
       }
     }
-  } else if (envValue) {
-    value = envValue;
-    source = "environment variable";
-    logAccess("GET", key, "environment", "success");
   }
 
   console.log(`🔐 VAULT: getSecret("${key}") → ${source}`);
@@ -143,13 +221,17 @@ function getSecret(key, skipAudit = false) {
 /**
  * Set a secret with optional TTL (in hours)
  */
-function setSecret(key, value, ttlHours = null) {
+function setSecret(key, value, ttlHours = null, encrypt = true) {
   try {
     const secrets = loadSecrets();
     const existingSecret = secrets[key];
 
+    // Encrypt the value
+    const storedValue = encrypt ? encryptValue(value) : value;
+
     const secretObj = {
-      value: value,
+      value: storedValue,
+      encrypted: encrypt,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
       ttl_hours: ttlHours,
@@ -158,11 +240,16 @@ function setSecret(key, value, ttlHours = null) {
 
     // Track rotation history
     if (existingSecret) {
+      // Hash the decrypted value for comparison
+      const oldValue = existingSecret.encrypted
+        ? decryptValue(existingSecret.value)
+        : existingSecret.value;
+
       secretObj.rotations.push({
         rotated_at: new Date().toISOString(),
         prev_value_hash: crypto
           .createHash("sha256")
-          .update(existingSecret.value)
+          .update(oldValue)
           .digest("hex"),
       });
     }
@@ -171,8 +258,8 @@ function setSecret(key, value, ttlHours = null) {
     fs.writeFileSync(VAULT_FILE, JSON.stringify(secrets, null, 2));
     console.log(
       `✅ VAULT: Secret updated "${key}"${
-        ttlHours ? ` (TTL: ${ttlHours}h)` : ""
-      }`
+        encrypt ? " (AES-256-GCM encrypted)" : ""
+      }${ttlHours ? ` (TTL: ${ttlHours}h)` : ""}`
     );
     logAccess("SET", key, "vault-update", "success");
   } catch (error) {
@@ -205,6 +292,12 @@ function status() {
   console.log("\n📋 VAULT STATUS:");
   console.log(`   File: ${VAULT_FILE}`);
   console.log(`   Exists: ${fs.existsSync(VAULT_FILE) ? "✅ Yes" : "❌ No"}`);
+  console.log(`   Encryption: AES-256-GCM`);
+  console.log(
+    `   Key file: ${
+      fs.existsSync(VAULT_KEY_FILE) ? "✅ Present" : "❌ Missing"
+    }`
+  );
   console.log(`   Secrets count: ${Object.keys(secrets).length}`);
 
   Object.keys(secrets).forEach((key) => {
@@ -213,8 +306,9 @@ function status() {
     const ttlInfo = secret.ttl_hours
       ? `(TTL: ${secret.ttl_hours}h)`
       : "(No expiration)";
+    const encInfo = secret.encrypted ? "🔐 Encrypted" : "📝 Plaintext";
     const status = expired ? "❌ EXPIRED" : "✅ Active";
-    console.log(`   - ${key}: ${status} ${ttlInfo}`);
+    console.log(`   - ${key}: ${status} ${encInfo} ${ttlInfo}`);
   });
   console.log();
 }
@@ -251,6 +345,35 @@ function auditStatus(limit = 5) {
   });
 }
 
+/**
+ * Migrate plaintext secrets to encrypted
+ */
+function migrateToEncrypted() {
+  try {
+    const secrets = loadSecrets();
+    let migrated = 0;
+
+    Object.keys(secrets).forEach((key) => {
+      const secret = secrets[key];
+      if (!secret.encrypted) {
+        console.log(`🔄 Migrating "${key}" to encrypted storage...`);
+        setSecret(key, secret.value, secret.ttl_hours, true);
+        migrated++;
+      }
+    });
+
+    if (migrated > 0) {
+      console.log(
+        `✅ Migrated ${migrated} secret(s) to AES-256-GCM encryption`
+      );
+    } else {
+      console.log(`✅ All secrets already encrypted`);
+    }
+  } catch (error) {
+    console.error("❌ Migration error:", error.message);
+  }
+}
+
 module.exports = {
   initVault,
   getSecret,
@@ -260,4 +383,5 @@ module.exports = {
   auditStatus,
   getAuditLog,
   isExpired,
+  migrateToEncrypted,
 };

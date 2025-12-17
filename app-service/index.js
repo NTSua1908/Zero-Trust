@@ -14,7 +14,12 @@ vault.initVault();
 vault.status();
 vault.auditStatus(3);
 const GATEWAY_HMAC_SECRET = vault.getSecret("gateway_hmac_secret");
-console.log(`✅ App Service: HMAC Secret loaded from vault\n`);
+const JWT_SECRET =
+  vault.getSecret("jwt_secret") ||
+  process.env.JWT_SECRET ||
+  "aaa-server-secret-key-2025";
+console.log(`✅ App Service: HMAC Secret loaded from vault`);
+console.log(`✅ App Service: JWT Secret loaded from vault\n`);
 
 // Database connection
 const pool = new Pool({
@@ -31,6 +36,10 @@ app.use(express.json({ limit: "10mb" }));
 
 // In-memory transactions (for demo)
 const transactions = [];
+
+// In-memory cache for public keys (with TTL)
+const publicKeyCache = new Map();
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 /**
  * Health check
@@ -153,12 +162,10 @@ async function verifyToken(req, res, next) {
       console.warn("⚠️ No timestamp in request - replay protection disabled");
     }
 
-    // Verify token with AAA Server
-    const response = await axios.post(`${AAA_URL}/verify-token`, {
-      token: actualPayload.token,
-    });
+    // Verify token locally (Zero Trust - no dependency on AAA)
+    const tokenPayload = crypto.verifyToken(actualPayload.token, JWT_SECRET);
 
-    if (!response.data.success) {
+    if (!tokenPayload) {
       console.error("❌ Token verification failed");
       return res.status(401).json({
         success: false,
@@ -167,8 +174,8 @@ async function verifyToken(req, res, next) {
       });
     }
 
-    console.log("✅ Layer 2: Token verified");
-    req.tokenPayload = response.data.payload;
+    console.log("✅ Layer 2: Token verified locally (Zero Trust)");
+    req.tokenPayload = tokenPayload;
     next();
   } catch (error) {
     console.error("❌ Token verification error:", error.message);
@@ -181,19 +188,81 @@ async function verifyToken(req, res, next) {
 }
 
 /**
+ * Get public key from database with caching
+ */
+async function getPublicKey(username) {
+  const cacheKey = `pk_${username}`;
+  const cached = publicKeyCache.get(cacheKey);
+
+  // Return cached value if still valid
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    console.log(`🔑 Public key from cache: ${username}`);
+    return cached.publicKey;
+  }
+
+  // Fetch from database
+  try {
+    const result = await pool.query(
+      "SELECT public_key FROM users WHERE username = $1",
+      [username]
+    );
+
+    if (!result.rows.length) {
+      return null;
+    }
+
+    const publicKey = result.rows[0].public_key;
+
+    // Cache it
+    publicKeyCache.set(cacheKey, {
+      publicKey,
+      timestamp: Date.now(),
+    });
+
+    console.log(`🔑 Public key from database: ${username}`);
+    return publicKey;
+  } catch (error) {
+    console.error("❌ Error fetching public key:", error.message);
+    return null;
+  }
+}
+
+/**
  * Middleware: Verify User Signature (Layer 3 - User Authentication)
  */
-function verifyUserSignature(req, res, next) {
+async function verifyUserSignature(req, res, next) {
   try {
     const { protected_payload, user_signature } =
       req.gatewayEnvelope.original_request;
-    const publicKey = req.tokenPayload.publicKey;
+    const username = req.tokenPayload.username;
 
     if (!user_signature) {
       console.error("❌ Missing user signature");
       return res.status(400).json({
         success: false,
         error: "User signature required",
+        layer: "user_signature_verification",
+      });
+    }
+
+    // Get current public key from database (with cache)
+    const publicKey = await getPublicKey(username);
+
+    if (!publicKey) {
+      console.error("❌ User not found or key revoked");
+      return res.status(401).json({
+        success: false,
+        error: "User not found or key revoked",
+        layer: "user_signature_verification",
+      });
+    }
+
+    // Verify public key matches token (detect key rotation)
+    if (publicKey !== req.tokenPayload.publicKey) {
+      console.warn("⚠️ Public key changed - token invalidated by key rotation");
+      return res.status(401).json({
+        success: false,
+        error: "Public key has been rotated - please login again",
         layer: "user_signature_verification",
       });
     }
@@ -335,16 +404,17 @@ app.post("/internal/transfer", threeLayerVerification, async (req, res) => {
       data: req.userData,
     });
 
-    // Extract the actual data - userData already has the data after removePadding
-    // The payload contains: { username, receiver, amount, timestamp, token }
-    const receiver = req.userData?.receiver;
-    const amount = req.userData?.amount;
+    // Extract the actual data from nested structure
+    // The payload contains: { data: { username, receiver, amount, timestamp, token } }
+    const requestData = req.userData?.data || req.userData;
+    const receiver = requestData?.receiver;
+    const amount = requestData?.amount;
 
     if (!receiver || !amount || amount <= 0) {
       return res.status(400).json({
         success: false,
         error: "Invalid transfer parameters",
-        received: { receiver, amount, userData: req.userData },
+        received: { receiver, amount, requestData, userData: req.userData },
       });
     }
 
@@ -499,6 +569,29 @@ app.post("/internal/history", threeLayerVerification, async (req, res) => {
     res.status(500).json({
       success: false,
       error: "History query failed",
+    });
+  }
+});
+
+/**
+ * Clear public key cache for a user (for key rotation/revocation)
+ * POST /admin/clear-cache/:username
+ */
+app.post("/admin/clear-cache/:username", (req, res) => {
+  const { username } = req.params;
+  const cacheKey = `pk_${username}`;
+
+  if (publicKeyCache.has(cacheKey)) {
+    publicKeyCache.delete(cacheKey);
+    console.log(`🗑️ Cache cleared for user: ${username}`);
+    res.json({
+      success: true,
+      message: `Cache cleared for ${username}`,
+    });
+  } else {
+    res.json({
+      success: true,
+      message: `No cache entry for ${username}`,
     });
   }
 });
