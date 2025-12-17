@@ -60,7 +60,7 @@ Dự án này xây dựng một mô hình **Zero Trust (Không tin cậy bất k
 
 ### Thành phần:
 
-1. **Client**: Tạo keypair, ký requests với ECDSA
+1. **Client**: Tạo keypair, ký requests với Ed25519
 2. **Gateway**: Proxy, HMAC wrapping cho internal communication
 3. **AAA Server**: Authentication, Authorization, Accounting
 4. **App Service**: Business logic với 3-layer verification (Zero Trust)
@@ -69,7 +69,7 @@ Dự án này xây dựng một mô hình **Zero Trust (Không tin cậy bất k
 
 ### Kiến trúc hoàn chỉnh (5 components)
 
-- ✅ Shared Library: Crypto functions (ECDSA, HMAC, Padding, JWT)
+- ✅ Shared Library: Crypto functions (Ed25519, HMAC, Padding, JWT)
 - ✅ AAA Server (Port 4001): Authentication, Authorization, Accounting
 - ✅ Gateway (Port 4002): HMAC wrapping & routing
 - ✅ App Service (Port 4003): 3-layer verification + business logic
@@ -78,7 +78,7 @@ Dự án này xây dựng một mô hình **Zero Trust (Không tin cậy bất k
 
 ## 🔒 Cơ chế bảo mật
 
-### 1. ECDSA Digital Signature (Asymmetric)
+### 1. Ed25519 Digital Signature (Curve25519)
 
 - User giữ **Private Key** bí mật
 - Server lưu **Public Key** để verify
@@ -236,7 +236,7 @@ Menu sẽ hiện ra:
 
 Kịch bản:
 
-1. ✅ Tạo user với ECDSA keypair
+1. ✅ Tạo user với Ed25519 keypair
 2. ✅ Login với signature
 3. ✅ Check balance (3-layer verification)
 4. ✅ Transfer money
@@ -274,14 +274,14 @@ Kịch bản:
 Kiểm tra:
 
 - ✅ Health checks của tất cả services
-- ✅ Crypto functions (ECDSA, HMAC, Padding, JWT)
+- ✅ Crypto functions (Ed25519, HMAC, Padding, JWT)
 
 ## 📁 Cấu trúc dự án
 
 ```
 d:\Code\security\
 ├── shared/                  # Shared crypto library
-│   ├── crypto.js           # ECDSA, HMAC, Padding, JWT
+│   ├── crypto.js           # Ed25519, HMAC, Padding, JWT
 │   └── package.json
 │
 ├── aaa-server/             # AAA Server (Port 4001)
@@ -357,7 +357,7 @@ d:\Code\security\
 
 #### POST /login
 
-Login với ECDSA signature.
+Login với Ed25519 signature.
 
 **Request:**
 
@@ -566,7 +566,7 @@ Educational project - MIT License
 
 ## 🙏 Acknowledgments
 
-- ECDSA: elliptic library
+- Ed25519: tweetnacl library
 - Express.js framework
 - PostgreSQL database
 - Docker containerization

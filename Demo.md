@@ -67,7 +67,7 @@ Dự án đề xuất mô hình **"Never Trust, Always Verify"** (Không tin b�
 
 Hệ thống bao gồm 4 thành phần chính:
 
-1.  **Client:** Giữ Private Key, thực hiện ký số ECDSA.
+1.  **Client:** Giữ Private Key, thực hiện ký số Ed25519.
 2.  **Gateway:** Điểm nhập (Entry point), thực hiện định tuyến và ký HMAC để bảo vệ đường truyền nội bộ.
 3.  **AAA Server:** Quản lý định danh, khóa công khai (Public Key) và cấp phát Token.
 4.  **App Service:** Thực hiện logic nghiệp vụ và xác thực 3 lớp.
@@ -80,7 +80,7 @@ Mỗi Request đi vào App Service phải vượt qua 3 "cánh cửa":
 
 - **Layer 1 - Gateway Integrity (HMAC):** Kiểm tra xem Request có thực sự đi qua Gateway chính thống hay không (Chống Bypass Gateway).
 - **Layer 2 - Authorization (JWT Token):** Kiểm tra xem User có quyền gửi Request hay không (kiểm tra hạn dùng, issuer).
-- **Layer 3 - User Identity (ECDSA Signature):** Kiểm tra xem người gửi có thực sự nắm giữ Private Key hay không (Cơ chế Holder-of-Key).
+- **Layer 3 - User Identity (Ed25519 Signature):** Kiểm tra xem người gửi có thực sự nắm giữ Private Key hay không (Cơ chế Holder-of-Key).
 
 #### B. Holder-of-Key (Proof-of-Possession)
 
@@ -102,7 +102,7 @@ Mỗi Request đi vào App Service phải vượt qua 3 "cánh cửa":
 ### Kịch bản 1: Luồng hoạt động bình thường (Happy Path)
 
 - **Hành động:**
-  1.  Nhấn **"Register New Account"** -> Tạo User mới (Hệ thống tự sinh cặp khóa ECDSA).
+  1.  Nhấn **"Register New Account"** -> Tạo User mới (Hệ thống tự sinh cặp khóa Ed25519).
   2.  Nhấn **"Login"** -> Client dùng Private Key ký vào Timestamp để đăng nhập.
   3.  Thực hiện **"Check Balance"** hoặc **"Transfer Money"**.
 - **Kết quả mong đợi:**
@@ -159,12 +159,12 @@ Theo triết lý Zero Trust, chúng ta không tin tưởng mạng nội bộ.
 Nếu chỉ xác thực ở Gateway (mô hình truyền thống), một khi Hacker chiếm quyền điều khiển Gateway hoặc một Service khác trong mạng nội bộ, hắn có thể gọi trực tiếp API của App Service để rút tiền.
 Việc xác thực 3 lớp tại App Service đảm bảo rằng ngay cả khi Gateway bị "thủng", App Service vẫn tự bảo vệ được mình vì Hacker không thể giả mạo chữ ký của người dùng (Layer 3).
 
-#### Câu 2: Việc ký số (ECDSA) trên mọi Request có làm chậm hệ thống không?
+#### Câu 2: Việc ký số (Ed25519) trên mọi Request có làm chậm hệ thống không?
 
 **Trả lời:**
 Có ảnh hưởng đến hiệu năng nhưng ở mức chấp nhận được.
 
-- **Về thuật toán:** Dự án sử dụng đường cong Elliptic (`secp256k1`), cho tốc độ ký và xác thực nhanh hơn nhiều so với RSA cùng độ mạnh bảo mật.
+- **Về thuật toán:** Dự án sử dụng Ed25519 (Curve25519), cho tốc độ ký và xác thực nhanh hơn nhiều so với RSA cùng độ mạnh bảo mật, và an toàn hơn ECDSA secp256k1.
 - **Về trải nghiệm:** Với các giao dịch tài chính quan trọng, độ trễ thêm vài mili-giây để đổi lấy tính an toàn và chống chối bỏ là sự đánh đổi xứng đáng.
 
 #### Câu 3: Làm sao App Service biết Public Key của User để kiểm tra chữ ký?
@@ -178,7 +178,7 @@ App Service áp dụng **Hybrid Approach** kết hợp JWT và Database:
 
 3. **Key Rotation Detection**: So sánh Public Key từ Database với Public Key trong JWT:
    - Nếu khác nhau → User đã rotate key → Reject request với message "Please login again"
-   - Nếu giống nhau → Verify ECDSA signature
+   - Nếu giống nhau → Verify Ed25519 signature
 
 **Lợi ích**:
 

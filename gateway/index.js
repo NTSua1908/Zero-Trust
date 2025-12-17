@@ -65,11 +65,17 @@ app.post("/login", async (req, res) => {
     }
 
     // Forward to AAA Server
-    const response = await axios.post(`${AAA_URL}/login`, {
+    const loginPayload = {
       username,
       timestamp,
       signature,
-    });
+    };
+
+    console.log("📤 Gateway → AAA Server (Login):");
+    console.log("   Target:", `${AAA_URL}/login`);
+    console.log("   Payload:", JSON.stringify(loginPayload, null, 2));
+
+    const response = await axios.post(`${AAA_URL}/login`, loginPayload);
 
     console.log(`✅ Login successful for: ${username}`);
     res.json(response.data);
@@ -99,10 +105,16 @@ app.post("/register", async (req, res) => {
     }
 
     // Forward to AAA Server
-    const response = await axios.post(`${AAA_URL}/register`, {
+    const registerPayload = {
       username,
       publicKey,
-    });
+    };
+
+    console.log("📤 Gateway → AAA Server (Register):");
+    console.log("   Target:", `${AAA_URL}/register`);
+    console.log("   Payload:", JSON.stringify(registerPayload, null, 2));
+
+    const response = await axios.post(`${AAA_URL}/register`, registerPayload);
 
     console.log(`✅ Registration successful for: ${username}`);
     res.json(response.data);
@@ -171,7 +183,14 @@ app.post("/api/:endpoint", async (req, res) => {
       gateway_hmac: gatewayHmac,
     };
 
-    console.log(`🔒 Request wrapped with HMAC, forwarding to App Service...`);
+    console.log("📤 Gateway → App Service (API Call):");
+    console.log("   Target:", `${APP_URL}/internal/${endpoint}`);
+    console.log(
+      "   Gateway Envelope:",
+      JSON.stringify(gatewayEnvelope, null, 2)
+    );
+    console.log("   HMAC Signature:", gatewayHmac.substring(0, 32) + "...");
+    console.log("🔒 Request wrapped with HMAC, forwarding to App Service...\n");
 
     // Forward to App Service
     const response = await axios.post(

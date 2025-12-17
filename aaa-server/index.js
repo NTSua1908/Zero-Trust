@@ -2,10 +2,20 @@ const express = require("express");
 const cors = require("cors");
 const { Pool } = require("pg");
 const crypto = require("../shared/crypto");
+const vault = require("../shared/vault");
 
 const app = express();
 const PORT = process.env.PORT || 4001;
-const JWT_SECRET = process.env.JWT_SECRET || "aaa-server-secret-key-2025";
+
+// Initialize vault
+vault.initVault();
+vault.status();
+vault.auditStatus(3);
+const JWT_SECRET =
+  vault.getSecret("jwt_secret") ||
+  process.env.JWT_SECRET ||
+  "aaa-server-secret-key-2025";
+console.log(`✅ AAA Server: JWT Secret loaded from vault\n`);
 
 // Middleware
 app.use(cors());
@@ -160,7 +170,7 @@ app.post("/login", async (req, res) => {
       });
     }
 
-    // Check timestamp (prevent replay attacks - max 5 minutes old)
+    // Check timestamp (prevent replay attacks - max 1 minutes old)
     // Handle both seconds and milliseconds timestamp formats
     const now = Date.now();
     const requestTime = timestamp > 9999999999 ? timestamp : timestamp * 1000;
@@ -170,10 +180,10 @@ app.post("/login", async (req, res) => {
       `[TIMESTAMP DEBUG] now=${now}, request=${timestamp}, converted=${requestTime}, diff=${timeDiff}ms`
     );
 
-    if (timeDiff > 300000) {
-      // 5 minutes in milliseconds
+    if (timeDiff > 60000) {
+      // 1 minute in milliseconds
       console.log(
-        `[TIMESTAMP REJECTED] Diff ${timeDiff}ms exceeds 300000ms limit`
+        `[TIMESTAMP REJECTED] Diff ${timeDiff}ms exceeds 60000ms limit`
       );
       return res.status(401).json({
         success: false,

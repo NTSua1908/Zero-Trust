@@ -23,53 +23,37 @@ Các đặc điểm cốt lõi:
 Hệ thống được chia thành 3 vùng bảo mật chính: **Client Zone** (Người dùng), **DMZ Zone** (Vùng đệm), và **Internal Zone** (Vùng lõi an toàn).
 
 ```mermaid
-graph TD
-    %% --- STYLE ---
-    classDef untrusted fill:#ffebee,stroke:#d32f2f,stroke-width:2px;
-    classDef dmz fill:#fff8e1,stroke:#fbc02d,stroke-width:2px;
-    classDef internal fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px;
+graph LR
+    Client["🖥️ CLIENT<br/>Private Key<br/>Public Key"]
+    Gateway["🚪 GATEWAY<br/>HMAC Signer"]
+    AAA["🔐 AAA SERVER<br/>Token Issuer"]
+    App["📊 APP SERVICE<br/>3-Layer Check"]
+    Vault["🔐 VAULT<br/>AES-256-GCM<br/>Secrets Manager"]
+    DB[("💾 DATABASE<br/>Public Keys<br/>User Data")]
 
-    %% --- 1. CLIENT ZONE ---
-    subgraph Client_Zone ["1. Vùng Người Dùng (Client Side)"]
-        User((User / App)):::untrusted
-        subgraph User_Store [Lưu trữ cục bộ]
-            PrivKey["🔑 Private Key (Cố định)"]
-            TokenStore["🎫 Access Token (Lưu tạm)"]
-        end
-        User --- User_Store
-    end
-
-    %% --- 2. DMZ ZONE ---
-    subgraph DMZ_Zone ["2. DMZ (Gateway & Routing)"]
-        LB(Load Balancer):::dmz
-        GW(Gateway):::dmz
-    end
-
-    %% --- 3. INTERNAL ZONE ---
-    subgraph Internal_Zone ["3. Hệ thống Backend (Secure Edge)"]
-        AAA(AAA Server):::internal
-        App(App / Edge Host):::internal
-        DB[(User Public Keys <br/>& Policies)]:::internal
-    end
-
-    %% --- FLOW ---
-    User_Store -.->|Ký ECDSA| User
-    User ==>|Gửi Request| LB
-    LB ==>|Forward| GW
-    GW <-->|Login & Verify| AAA
+    Client <-->|1. Register| Gateway
+    Gateway <-->|Forward| AAA
     AAA <--> DB
-    GW <==>|Request + HMAC (2 chiều)| App
 
-    %% Verify Logic
-    App -.->|Verify Token| AAA
-    App -.->|Verify User Sig| DB
+    Client <-->|2. Login + Sign| Gateway
+    Gateway <-->|Verify + Issue Token| AAA
+
+    Client -->|3. API + Token + Sig| Gateway
+    Gateway -->|Add HMAC| Gateway
+    Gateway -->|Forward| App
+    App -.->|Verify JWT locally| App
+    App <-->|Get Public Key| DB
+    App -->|Result| Client
+
+    Gateway <-.->|Load Secrets| Vault
+    App <-.->|Load Secrets| Vault
 ```
 
 ### Các thành phần chính:
 
 1.  **User (Client):**
     - Lưu trữ **Private Key** (Bí mật dài hạn - Long term secret).
-    - Thực hiện mã hóa, padding và ký số (ECDSA).
+    - Thực hiện mã hóa, padding và ký số (Ed25519).
 2.  **Gateway:**
     - Điểm kiểm soát ra vào.
     - Xác thực với AAA để xin Token cho User.
@@ -96,11 +80,11 @@ graph TD
 
 Dự án áp dụng tổ hợp các kỹ thuật sau để đạt mức độ an toàn cao nhất:
 
-### 3.1. Mã hóa Bất đối xứng (Asymmetric Cryptography) - ECDSA
+### 3.1. Mã hóa Bất đối xứng (Asymmetric Cryptography) - Ed25519
 
 - **Mục đích:** Định danh người dùng và Chống chối bỏ.
 - **Cách dùng:** User dùng Private Key để ký lên dữ liệu. Server dùng Public Key để kiểm tra.
-- **Tại sao ECDSA?** Nhanh và nhẹ hơn RSA, phù hợp cho thiết bị di động và tần suất request cao.
+- **Tại sao Ed25519?** Nhanh và an toàn hơn ECDSA secp256k1, không có lỗ hổng timing attack, phù hợp cho thiết bị di động và tần suất request cao.
 
 ### 3.2. Mã hóa Đối xứng (Symmetric Cryptography) - HMAC
 
@@ -135,7 +119,7 @@ sequenceDiagram
 
     %% --- PHA 1 ---
     Note over U, AAA: PHA 1: XÁC THỰC & CẤP TOKEN (Authentication)
-    U->>U: Tạo Login Request + Ký ECDSA
+    U->>U: Tạo Login Request + Ký Ed25519
     U->>GW: Gửi Login Request
     GW->>AAA: Chuyển tiếp (Forward)
     Note over AAA: Verify ECDSA (Dùng Public Key trong DB)

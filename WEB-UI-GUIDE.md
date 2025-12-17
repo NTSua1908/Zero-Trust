@@ -43,7 +43,7 @@ Mỗi thao tác được log với đầy đủ thông tin:
 
 **Đăng ký:**
 
-- ✅ Generating ECDSA key pair
+- ✅ Generating Ed25519 key pair
 - Public Key: 04abcd...
 - Private Key: [PROTECTED]
 - Registration successful
@@ -51,7 +51,7 @@ Mỗi thao tác được log với đầy đủ thông tin:
 **Đăng nhập:**
 
 - 🔐 Starting login process
-- 🖊️ Signing with ECDSA
+- 🖊️ Signing with Ed25519
 - 📤 Sending to Gateway
 - ✅ Token received
 
@@ -60,7 +60,7 @@ Mỗi thao tác được log với đầy đủ thông tin:
 - 💰 Checking balance
 - 📤 Layer 1: Gateway HMAC
 - 📤 Layer 2: JWT Token
-- 📤 Layer 3: ECDSA Signature
+- 📤 Layer 3: Ed25519 Signature
 - ✅ All 3 layers verified
 - Balance: 1,000,000 VND
 
@@ -113,7 +113,7 @@ Truy cập: http://localhost:3000
 
 **B. Đăng nhập:**
 
-1. Click "Login with ECDSA Signature"
+1. Click "Login with Ed25519 Signature"
 2. Quan sát logs:
    - Signing process
    - Request details
@@ -165,7 +165,7 @@ Truy cập: http://localhost:3000
 
 - **HTML/CSS**: Responsive design, gradient backgrounds
 - **JavaScript**: Vanilla JS, không dùng framework
-- **Web Crypto API**: ECDSA P-256 signing
+- **TweetNaCl**: Ed25519 signing
 - **LocalStorage**: Lưu keys trong browser
 
 ### Backend
@@ -221,7 +221,7 @@ Keys được lưu trong localStorage:
 
 Web Crypto API khác với Node.js crypto:
 
-- Dùng ECDSA P-256 (không phải secp256k1)
+- Dùng Ed25519 (Curve25519) thay vì ECDSA secp256k1
 - Keys có format khác
 - Nếu load keys từ CLI client, có thể không tương thích
 

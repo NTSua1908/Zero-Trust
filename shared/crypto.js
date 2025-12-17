@@ -1,54 +1,46 @@
 const crypto = require("crypto");
-const { ec: EC } = require("elliptic");
-
-const ec = new EC("secp256k1");
+const nacl = require("tweetnacl");
+const { encodeBase64, decodeBase64 } = require("tweetnacl-util");
 
 /**
- * Generate ECDSA keypair
+ * Generate Ed25519 keypair (Curve25519 for signatures)
  * @returns {{privateKey: string, publicKey: string}}
  */
 function generateECDSAKeyPair() {
-  const keyPair = ec.genKeyPair();
+  const keyPair = nacl.sign.keyPair();
   return {
-    privateKey: keyPair.getPrivate("hex"),
-    publicKey: keyPair.getPublic("hex"),
+    privateKey: Buffer.from(keyPair.secretKey).toString("hex"),
+    publicKey: Buffer.from(keyPair.publicKey).toString("hex"),
   };
 }
 
 /**
- * Sign data with ECDSA private key
+ * Sign data with Ed25519 private key
  * @param {object} data - Data to sign
- * @param {string} privateKeyHex - Private key in hex
+ * @param {string} privateKeyHex - Private key in hex (64 bytes)
  * @returns {string} Signature in hex
  */
 function signWithPrivateKey(data, privateKeyHex) {
-  const keyPair = ec.keyFromPrivate(privateKeyHex, "hex");
-  const dataHash = crypto
-    .createHash("sha256")
-    .update(JSON.stringify(data))
-    .digest();
-  const signature = keyPair.sign(dataHash);
-  return signature.toDER("hex");
+  const message = Buffer.from(JSON.stringify(data), "utf8");
+  const secretKey = Buffer.from(privateKeyHex, "hex");
+  const signature = nacl.sign.detached(message, secretKey);
+  return Buffer.from(signature).toString("hex");
 }
 
 /**
- * Verify ECDSA signature
+ * Verify Ed25519 signature
  * @param {object} data - Original data
- * @param {string} signatureHex - Signature in hex
- * @param {string} publicKeyHex - Public key in hex
+ * @param {string} signatureHex - Signature in hex (64 bytes)
+ * @param {string} publicKeyHex - Public key in hex (32 bytes)
  * @returns {boolean} True if valid
  */
 function verifySignature(data, signatureHex, publicKeyHex) {
   try {
-    const keyPair = ec.keyFromPublic(publicKeyHex, "hex");
-    const dataHash = crypto
-      .createHash("sha256")
-      .update(JSON.stringify(data))
-      .digest();
+    const message = Buffer.from(JSON.stringify(data), "utf8");
+    const signature = Buffer.from(signatureHex, "hex");
+    const publicKey = Buffer.from(publicKeyHex, "hex");
 
-    // Parse DER signature from hex
-    const signatureBuffer = Buffer.from(signatureHex, "hex");
-    return keyPair.verify(dataHash, signatureBuffer);
+    return nacl.sign.detached.verify(message, signature, publicKey);
   } catch (error) {
     console.error("Signature verification error:", error.message);
     console.error("  Data:", JSON.stringify(data));

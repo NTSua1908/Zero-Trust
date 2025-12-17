@@ -15,7 +15,7 @@ let state = {
 // Initialize
 document.addEventListener("DOMContentLoaded", () => {
   // Wait for libraries to load
-  if (typeof elliptic === "undefined" || typeof CryptoJS === "undefined") {
+  if (typeof nacl === "undefined" || typeof CryptoJS === "undefined") {
     setTimeout(() => {
       log("🚀 Zero Trust Web UI initialized", "info");
       checkServices();
@@ -73,20 +73,23 @@ function clearLogs() {
 
 // ============= Crypto Functions =============
 async function generateKeyPair() {
-  log("🔑 Generating ECDSA key pair (secp256k1)...", "info");
+  log("🔑 Generating Ed25519 key pair (Curve25519)...", "info");
 
-  // Using elliptic library (same as backend)
-  const EC = elliptic.ec;
-  const ec = new EC("secp256k1");
+  // Using TweetNaCl for Ed25519 (same as backend)
+  const keyPair = nacl.sign.keyPair();
 
-  const keyPair = ec.genKeyPair();
-  const publicKey = keyPair.getPublic("hex");
-  const privateKey = keyPair.getPrivate("hex");
+  // Convert to hex for storage and transmission
+  const publicKey = Array.from(keyPair.publicKey)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  const privateKey = Array.from(keyPair.secretKey)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 
   log("✅ Key pair generated successfully", "success", {
     "Public Key": publicKey.substring(0, 64) + "...",
     "Private Key": "[PROTECTED]",
-    Algorithm: "ECDSA secp256k1",
+    Algorithm: "Ed25519 (Curve25519)",
   });
 
   return {
@@ -119,28 +122,30 @@ function applyPadding(data, targetSize = 4096) {
 }
 
 function signData(data, keyPair) {
-  // Create hash of data (same as backend: JSON.stringify then SHA-256)
+  // Convert data to UTF-8 bytes (same as backend: JSON.stringify)
   const dataString = JSON.stringify(data);
-  const hash = CryptoJS.SHA256(dataString);
+  const encoder = new TextEncoder();
+  const message = encoder.encode(dataString);
 
-  // Convert hash to array for elliptic (using WordArray)
-  const hashArray = [];
-  for (let i = 0; i < hash.words.length; i++) {
-    const word = hash.words[i];
-    hashArray.push((word >>> 24) & 0xff);
-    hashArray.push((word >>> 16) & 0xff);
-    hashArray.push((word >>> 8) & 0xff);
-    hashArray.push(word & 0xff);
+  // Convert hex private key to Uint8Array (handle both stored string and generated keyPair)
+  let secretKey;
+  if (keyPair.keyPairObject && keyPair.keyPairObject.secretKey) {
+    // Use existing Uint8Array from generated keypair
+    secretKey = keyPair.keyPairObject.secretKey;
+  } else {
+    // Convert from hex string (loaded from storage)
+    secretKey = new Uint8Array(
+      keyPair.privateKey.match(/.{1,2}/g).map((byte) => parseInt(byte, 16))
+    );
   }
 
-  // Get the actual elliptic key pair object
-  const EC = elliptic.ec;
-  const ec = new EC("secp256k1");
-  const key = ec.keyFromPrivate(keyPair.privateKey, "hex");
+  // Sign with Ed25519
+  const signature = nacl.sign.detached(message, secretKey);
 
-  // Sign with private key
-  const signature = key.sign(hashArray);
-  const signatureHex = signature.toDER("hex");
+  // Convert signature to hex
+  const signatureHex = Array.from(signature)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 
   return signatureHex;
 }
@@ -830,11 +835,17 @@ function selectAccount(username) {
       privateKey: account.privateKey,
     };
 
-    // Recreate elliptic key pair
-    const EC = elliptic.ec;
-    const ec = new EC("secp256k1");
-    const keyPair = ec.keyFromPrivate(account.privateKey, "hex");
-    state.keyPair.keyPairObject = keyPair;
+    // Recreate Ed25519 key pair from stored hex keys
+    const secretKey = new Uint8Array(
+      account.privateKey.match(/.{1,2}/g).map((byte) => parseInt(byte, 16))
+    );
+    const publicKey = new Uint8Array(
+      account.publicKey.match(/.{1,2}/g).map((byte) => parseInt(byte, 16))
+    );
+    state.keyPair.keyPairObject = {
+      secretKey: secretKey,
+      publicKey: publicKey,
+    };
 
     // Save as last used
     localStorage.setItem("zerotrust_last_username", username);
@@ -881,11 +892,26 @@ async function loginWithManualKeys() {
   log("🔑 Attempting manual login...", "info", { Username: username });
 
   try {
-    // Validate and recreate key pair
-    const EC = elliptic.ec;
-    const ec = new EC("secp256k1");
-    const keyPair = ec.keyFromPrivate(privateKey, "hex");
-    const publicKey = keyPair.getPublic("hex");
+    // Validate and recreate Ed25519 key pair
+    const secretKey = new Uint8Array(
+      privateKey.match(/.{1,2}/g).map((byte) => parseInt(byte, 16))
+    );
+
+    // Ed25519 secret key is 64 bytes (private 32 + public 32)
+    if (secretKey.length !== 64) {
+      throw new Error("Invalid Ed25519 private key length (expected 64 bytes)");
+    }
+
+    // Extract public key from secret key (last 32 bytes)
+    const publicKeyBytes = secretKey.slice(32);
+    const publicKey = Array.from(publicKeyBytes)
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+
+    const keyPair = {
+      secretKey: secretKey,
+      publicKey: publicKeyBytes,
+    };
 
     // Set state
     state.username = username;

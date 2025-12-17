@@ -7,10 +7,11 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 
-// Vault file location
-const VAULT_FILE = path.join(__dirname, "..", "secrets.json");
-const AUDIT_FILE = path.join(__dirname, "..", "vault-audit.json");
-const VAULT_KEY_FILE = path.join(__dirname, "..", ".vault-key");
+// Vault file location (use volume-mounted directory)
+const VAULT_DIR = path.join(__dirname, ".vault");
+const VAULT_FILE = path.join(VAULT_DIR, "secrets.json");
+const AUDIT_FILE = path.join(VAULT_DIR, "vault-audit.json");
+const VAULT_KEY_FILE = path.join(VAULT_DIR, ".vault-key");
 
 // Encryption settings
 const ALGORITHM = "aes-256-gcm";
@@ -114,6 +115,12 @@ function decryptValue(encrypted) {
  * Initialize vault - create if not exists
  */
 function initVault() {
+  // Ensure vault directory exists
+  if (!fs.existsSync(VAULT_DIR)) {
+    fs.mkdirSync(VAULT_DIR, { recursive: true, mode: 0o700 });
+    console.log(`\n📁 VAULT: Created directory at ${VAULT_DIR}`);
+  }
+
   if (!fs.existsSync(VAULT_FILE)) {
     fs.writeFileSync(VAULT_FILE, JSON.stringify(DEFAULT_SECRETS, null, 2));
     console.log(`\n📦 VAULT: Created at ${VAULT_FILE}`);

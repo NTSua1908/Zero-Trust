@@ -38,6 +38,7 @@ services:
     volumes:
       - ./aaa-server:/app
       - ./shared:/shared
+      - vault-data:/shared/.vault
       - /app/node_modules
       - /shared/node_modules
     depends_on:
@@ -63,6 +64,7 @@ services:
     volumes:
       - ./gateway:/app
       - ./shared:/shared
+      - vault-data:/shared/.vault
       - /app/node_modules
       - /shared/node_modules
     depends_on:
@@ -91,6 +93,7 @@ services:
     volumes:
       - ./app-service:/app
       - ./shared:/shared
+      - vault-data:/shared/.vault
       - /app/node_modules
       - /shared/node_modules
     depends_on:
@@ -108,3 +111,4 @@ networks:
 
 volumes:
   postgres_data:
+  vault-data:
